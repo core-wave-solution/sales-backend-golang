@@ -1,0 +1,193 @@
+package employeerepositorybun
+
+import (
+	"context"
+	"sync"
+
+	"github.com/uptrace/bun"
+	"github.com/willjrcom/sales-backend-go/bootstrap/database"
+	addressentity "github.com/willjrcom/sales-backend-go/internal/domain/address"
+	employeeentity "github.com/willjrcom/sales-backend-go/internal/domain/employee"
+	personentity "github.com/willjrcom/sales-backend-go/internal/domain/person"
+)
+
+type EmployeeRepositoryBun struct {
+	mu sync.Mutex
+	db *bun.DB
+}
+
+func NewEmployeeRepositoryBun(db *bun.DB) *EmployeeRepositoryBun {
+	return &EmployeeRepositoryBun{db: db}
+}
+
+func (r *EmployeeRepositoryBun) RegisterEmployee(ctx context.Context, c *employeeentity.Employee) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := database.ChangeSchema(ctx, r.db); err != nil {
+		return err
+	}
+
+	tx, err := r.db.Begin()
+
+	if err != nil {
+		return err
+	}
+
+	// Register employee
+	if _, err := tx.NewInsert().Model(c).Exec(ctx); err != nil {
+		return rollback(&tx, err)
+	}
+
+	if c.Contact != nil {
+		if _, err := tx.NewDelete().Model(&personentity.Contact{}).Where("object_id = ?", c.ID).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+
+		// Register contact
+		if _, err := tx.NewInsert().Model(c.Contact).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+	}
+
+	if c.Address != nil {
+		if _, err := tx.NewDelete().Model(&addressentity.Address{}).Where("object_id = ?", c.ID).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+
+		// Register addresse
+		if _, err := tx.NewInsert().Model(c.Address).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return rollback(&tx, err)
+	}
+
+	return nil
+}
+
+func rollback(tx *bun.Tx, err error) error {
+	if err := tx.Rollback(); err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (r *EmployeeRepositoryBun) UpdateEmployee(ctx context.Context, p *employeeentity.Employee) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := database.ChangeSchema(ctx, r.db); err != nil {
+		return err
+	}
+
+	tx, err := r.db.Begin()
+
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.NewUpdate().Model(p).Where("employee.id = ?", p.ID).Exec(ctx); err != nil {
+		return err
+	}
+
+	if p.Contact != nil {
+		if _, err := tx.NewDelete().Model(&personentity.Contact{}).Where("object_id = ?", p.ID).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+
+		// Register contact
+		if _, err := tx.NewInsert().Model(p.Contact).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+	}
+
+	if p.Address != nil {
+		if _, err := tx.NewDelete().Model(&addressentity.Address{}).Where("object_id = ?", p.ID).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+
+		// Register addresse
+		if _, err := tx.NewInsert().Model(p.Address).Exec(ctx); err != nil {
+			return rollback(&tx, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return rollback(&tx, err)
+	}
+
+	return nil
+}
+
+func (r *EmployeeRepositoryBun) DeleteEmployee(ctx context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := database.ChangeSchema(ctx, r.db); err != nil {
+		return err
+	}
+
+	tx, err := r.db.Begin()
+
+	if err != nil {
+		return err
+	}
+
+	// Delete employee
+	if _, err = tx.NewDelete().Model(&employeeentity.Employee{}).Where("employee.id = ?", id).Exec(ctx); err != nil {
+		return rollback(&tx, err)
+	}
+
+	// Delete contact
+	if _, err = tx.NewDelete().Model(&personentity.Contact{}).Where("object_id = ?", id).Exec(ctx); err != nil {
+		return rollback(&tx, err)
+	}
+
+	// Delete address
+	if _, err = tx.NewDelete().Model(&addressentity.Address{}).Where("object_id = ?", id).Exec(ctx); err != nil {
+		return rollback(&tx, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *EmployeeRepositoryBun) GetEmployeeById(ctx context.Context, id string) (*employeeentity.Employee, error) {
+	employee := &employeeentity.Employee{}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := database.ChangeSchema(ctx, r.db); err != nil {
+		return nil, err
+	}
+
+	if err := r.db.NewSelect().Model(employee).Where("employee.id = ?", id).Relation("Address").Relation("Contact").Scan(ctx); err != nil {
+		return nil, err
+	}
+
+	return employee, nil
+}
+
+func (r *EmployeeRepositoryBun) GetAllEmployees(ctx context.Context) ([]employeeentity.Employee, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := database.ChangeSchema(ctx, r.db); err != nil {
+		return nil, err
+	}
+
+	employees := []employeeentity.Employee{}
+	if err := r.db.NewSelect().Model(&employees).Relation("Address").Relation("Contact").Scan(ctx); err != nil {
+		return nil, err
+	}
+
+	return employees, nil
+}
